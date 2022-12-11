@@ -5,7 +5,10 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bluetooth_serial/flutter_bluetooth_serial.dart';
+import 'package:scidart/numdart.dart';
 import 'package:syncfusion_flutter_charts/charts.dart';
+
+int maxDeg = 3;
 
 class ChatPage extends StatefulWidget {
   final BluetoothDevice server;
@@ -25,7 +28,7 @@ class _Message {
 
 class ChartData{
   ChartData(this.x, this.y);
-  final int x;
+  final double x;
   final double? y;
 }
 
@@ -47,21 +50,36 @@ class _ChatPage extends State<ChatPage> {
   bool lightIsActive = false;
   String fullOutputRead = "";
   bool readingFullOutput = false;
+  bool detailedView = false;
+  bool measuring = false;
   List<double> wavelengths = [0, 0, 0, 0, 0, 0];
-  List<int> channels = [450, 500, 550, 570, 600, 650];
+  List<int> wavelengthsSimplified = [0, 0, 0, 0, 0, 0];
+  List<double> channels = [450, 500, 550, 570, 600, 650];
+  late PolyFit p;
+  bool hasRead = false;
   List<String> channelsText = ["V", "B", "G", "Y", "O", "R"];
+  int wavelength = 0;
   List<ChartData> chartData = [];
+  List<ChartData> regressionData = [];
+  List<double> regressionY = [];
+  List<double> regressionX = [];
 
   void interpretString() {
-    print(fullOutputRead);
+    // print(fullOutputRead);
 
-    fullOutputRead = fullOutputRead.substring(1, fullOutputRead.length-1);
+    fullOutputRead = fullOutputRead.substring(fullOutputRead.indexOf("R")+1, fullOutputRead.indexOf("T"));
+    // print(fullOutputRead);
 
     for (int i=0;i<5;i++) {
       wavelengths[i] = double.tryParse(fullOutputRead.substring(0, fullOutputRead.indexOf(";")))!;
       fullOutputRead = fullOutputRead.substring(fullOutputRead.indexOf(";")+1, fullOutputRead.length);
     }
-    wavelengths[5] = double.tryParse(fullOutputRead)!;
+    // print(fullOutputRead);
+    wavelengths[5] = double.tryParse(fullOutputRead.substring(0, fullOutputRead.length < 5 ? fullOutputRead.length : 5))!;
+
+    for (int i=0;i<5;i++) {
+      wavelengthsSimplified[i] = int.parse(wavelengths[i].toStringAsFixed(0));
+    }
 
     chartData.clear();
 
@@ -70,6 +88,36 @@ class _ChatPage extends State<ChatPage> {
         ChartData(channels[i], wavelengths[i])
       );
     }
+
+    p = PolyFit(Array(channels), Array(wavelengths), maxDeg);
+
+    //Dummy way to find local max: we are gonna predict for EVERY x-y value 💀💀
+
+    //Humans see from 320 to 700 nanometer wavelengths
+    //We will do 440-660 to avoid having strange data
+
+    regressionY.clear();
+    regressionData.clear();
+
+    double localMax = 0;
+
+    for (int i=0;i<=220;i++) {
+      double current = (440+i).toDouble();
+      double value = p.predict(current);
+      if (value > localMax) {
+        wavelength = current.toInt();
+        localMax = value;
+      }
+      // print("Found $value for $current");
+
+      // if (i%5 == 0)
+        regressionData.add(ChartData(current, value));
+    }
+
+    hasRead = true;
+
+    print(wavelength);
+
 
     fullOutputRead = "";
   }
@@ -122,30 +170,6 @@ class _ChatPage extends State<ChatPage> {
 
   @override
   Widget build(BuildContext context) {
-    // final List<Row> list = messages.map((_message) {
-    //   return Row(
-    //     mainAxisAlignment: _message.whom == clientID
-    //         ? MainAxisAlignment.end
-    //         : MainAxisAlignment.start,
-    //     children: <Widget>[
-    //       Container(
-    //         padding: EdgeInsets.all(12.0),
-    //         margin: EdgeInsets.only(bottom: 8.0, left: 8.0, right: 8.0),
-    //         width: 222.0,
-    //         decoration: BoxDecoration(
-    //             color:
-    //                 _message.whom == clientID ? Colors.blueAccent : Colors.grey,
-    //             borderRadius: BorderRadius.circular(7.0)),
-    //         child: Text(
-    //             (text) {
-    //               return text == '/shrug' ? '¯\\_(ツ)_/¯' : text;
-    //             }(_message.text.trim()),
-    //             style: TextStyle(color: Colors.white)),
-    //       ),
-    //     ],
-    //   );
-    // }).toList();
-
     final serverName = widget.server.name ?? "Unknown";
     return Scaffold(
       appBar: AppBar(
@@ -164,7 +188,7 @@ class _ChatPage extends State<ChatPage> {
             //       children: list),
             // ),
             Divider(),
-            ListTile(title: const Text('Contrôle', style: TextStyle(fontWeight: FontWeight.bold))),
+            ListTile(title: const Text('Contrôle', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20))),
             SwitchListTile(
               title: const Text('Lumière'),
               value: lightIsActive,
@@ -176,13 +200,6 @@ class _ChatPage extends State<ChatPage> {
                 setState(() {});
               },
             ),
-
-            Divider(),
-
-            ListTile(title: const Text('Mesure', style: TextStyle(fontWeight: FontWeight.bold)), subtitle: Text(channelsText.toString()),),
-            Text(wavelengths.toString()),
-
-            SizedBox(height: 20),
 
             ListTile(
               title: const Text('Relire la couleur'),
@@ -199,27 +216,73 @@ class _ChatPage extends State<ChatPage> {
 
             Divider(),
 
-            ListTile(title: const Text('Analyse', style: TextStyle(fontWeight: FontWeight.bold))),
+            SizedBox(height: 20),
+
+            ListTile(
+              title: const Text('Analyse', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20)),
+              trailing: ElevatedButton(
+                onPressed: () {
+                  setState(() {
+                    detailedView = !detailedView;
+                  });
+                },
+                child:Text(detailedView ? "Afficher(-)" : "Afficher (+)")
+              ),
+            ),
+
+            if (hasRead)
+              Column(
+                children: [
+                  ListTile(
+                    title: const Text('Mesure', style: TextStyle()),
+                    subtitle: Text(detailedView ? channelsText.toString() : ""),
+                    trailing: Text(detailedView ? wavelengths.toString() : wavelengthsSimplified.toString(), style: TextStyle(fontSize: detailedView ? 12 : 14)),
+                  ),
+                  ListTile(
+                    title: const Text("Longueur d\'onde"),
+                    trailing: Text(wavelength.toString()),
+                  ),
+                  ListTile(
+                      title: const Text("Précision (R2)"),
+                      subtitle: Text(detailedView? p.toString().substring(0, p.toString().indexOf("(")-1) : "", style: TextStyle(fontSize: 10)),
+                      trailing: Text(detailedView ? p.R2().toString() : p.R2().toStringAsFixed(2))
+                  ),
+                ]
+              ),
 
             SizedBox(height: 20),
 
             SizedBox(
               height: 400,
               child: SfCartesianChart(
-                primaryXAxis: CategoryAxis(
-                    title: AxisTitle(
-                      text: 'Chaîne (μW/cm2)',
+                primaryXAxis: NumericAxis(
+                  plotBands: <PlotBand> [
+                    PlotBand(
+                      start: wavelength,
+                      end: wavelength,
+                      isVisible: true,
+                      borderWidth: 2,
+                      borderColor: Colors.red,
                     )
+                  ]
                 ),
                 series: <ChartSeries>[
-                  SplineSeries<ChartData, int>(
+                  SplineSeries<ChartData, double>(
+                      dataSource: regressionData,
+                      xValueMapper: (ChartData data, _) => data.x,
+                      yValueMapper: (ChartData data, _) => data.y,
+                      color: Colors.blue,
+                  ),
+                  ScatterSeries<ChartData, double>(
                       dataSource: chartData,
                       xValueMapper: (ChartData data, _) => data.x,
-                      yValueMapper: (ChartData data, _) => data.y
-                  )
+                      yValueMapper: (ChartData data, _) => data.y,
+                      color: Colors.black,
+                  ),
                 ],
               ),
             ),
+            Text('Chaîne (μW/cm2)'),
 
             SizedBox(height: 10),
 
