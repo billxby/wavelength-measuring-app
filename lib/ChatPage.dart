@@ -2,11 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:color_models/color_models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bluetooth_serial/flutter_bluetooth_serial.dart';
+import 'package:ondes/helpers/Variables.dart';
 import 'package:scidart/numdart.dart';
 import 'package:syncfusion_flutter_charts/charts.dart';
+import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 
 int maxDeg = 3;
 
@@ -51,6 +54,7 @@ class _ChatPage extends State<ChatPage> {
   String fullOutputRead = "";
   bool readingFullOutput = false;
   bool detailedView = false;
+  bool showColorPicker = false;
   bool measuring = false;
   List<double> wavelengths = [0, 0, 0, 0, 0, 0];
   List<int> wavelengthsSimplified = [0, 0, 0, 0, 0, 0];
@@ -63,6 +67,14 @@ class _ChatPage extends State<ChatPage> {
   List<ChartData> regressionData = [];
   List<double> regressionY = [];
   List<double> regressionX = [];
+
+  num X=0, Y=0, Z=0; // XYZ
+  num x=0, y=0, z=0; // xyz
+  int R=0, G=0, B=0; // RGB
+  num L=0, a=0, b=0; // Lab
+  String hexidecimal = "";
+
+  // ColorConverter colorConv = ColorConverter();
 
   void interpretString() {
     // print(fullOutputRead);
@@ -118,6 +130,88 @@ class _ChatPage extends State<ChatPage> {
 
     print(wavelength);
 
+    num Gamma = 0.8, IntensityMax = 255, factor;
+    if((wavelength >= 380) && (wavelength<440)){
+      R = (-(wavelength - 440) / (440 - 380)).round();
+      G = 0;
+      B = 1;
+    }else if((wavelength >= 440) && (wavelength<490)){
+      R = 0;
+      G = ((wavelength - 440) / (490 - 440)).round();
+      B = 1;
+    }else if((wavelength >= 490) && (wavelength<510)){
+      R = 0;
+      G = 1;
+      B = (-(wavelength - 510) / (510 - 490)).round();
+    }else if((wavelength >= 510) && (wavelength<580)){
+      R = ((wavelength - 510) / (580 - 510)).round();
+      G = 1;
+      B = 0;
+    }else if((wavelength >= 580) && (wavelength<645)){
+      R = 1;
+      G = (-(wavelength - 645) / (645 - 580)).round();
+      B = 0;
+    }else if((wavelength >= 645) && (wavelength<781)){
+      R = 1;
+      G = 0;
+      B = 0;
+    }else{
+      R = 0;
+      G = 0;
+      B = 0;
+    }
+    // Let the intensity fall off near the vision limits
+    if((wavelength >= 380) && (wavelength<420)){
+      factor = 0.3 + 0.7*(wavelength - 380) / (420 - 380);
+    }else if((wavelength >= 420) && (wavelength<701)){
+      factor = 1.0;
+    }else if((wavelength >= 701) && (wavelength<781)){
+      factor = 0.3 + 0.7*(780 - wavelength) / (780 - 700);
+    }else{
+      factor = 0.0;
+    };
+    if (R != 0){
+      R = (IntensityMax * pow(R * factor, Gamma)).round();
+    }
+    if (G != 0){
+      G = (IntensityMax * pow(G * factor, Gamma)).round();
+    }
+    if (B != 0){
+      B = (IntensityMax * pow(B * factor, Gamma)).round();
+    }
+
+
+    int adjWavelength = wavelength - 380; //Dataset starts @ 380
+    // int remainder = adjWavelength%5;
+    // if (remainder > 2) {
+    //   adjWavelength = adjWavelength - (remainder) + 5;
+    // } else {
+    //   adjWavelength = adjWavelength - (remainder);
+    // }
+    // adjWavelength = (adjWavelength/5).round();
+
+
+    X = ColorMatchingFunctions[adjWavelength]['X'];
+    Y = ColorMatchingFunctions[adjWavelength]['Y'];
+    Z = ColorMatchingFunctions[adjWavelength]['Z'];
+
+    x = X / (X+Y+Z);
+    y = Y / (X+Y+Z);
+    z = Z / (X+Y+Z);
+
+    //Color spaces:
+    // (XYZ) ; (xyz) ; (xyY) https://stackoverflow.com/questions/3407942/rgb-values-of-visible-spectrum thanks!
+
+    // XyzColor XYZ = XyzColor(x, y, z);
+    // RgbColor RGB = ColorConverter.xyzToRgb(XYZ);
+    // R = RGB.red; G = RGB.green; B = RGB.blue;
+    // LabColor Lab = ColorConverter.xyzToLab(XYZ);
+    RgbColor RGB = RgbColor(R, G, B);
+    LabColor Lab = ColorConverter.rgbToLab(RGB);
+    L = Lab.lightness; a = Lab.a;
+    hexidecimal = RGB.hex;
+
+    print(RGB.toString());
 
     fullOutputRead = "";
   }
@@ -291,14 +385,60 @@ class _ChatPage extends State<ChatPage> {
               subtitle: Align(
                 alignment: Alignment.centerLeft,
                 child: TextButton(
-                  child: Text('#FFFFFF 📄', style: TextStyle(color: Colors.black)),
+                  child: Text('${hexidecimal} 📄', style: TextStyle(color: Colors.black)),
                   onPressed: () async {
-                    await Clipboard.setData(ClipboardData(text: "#FFFFFF"));
+                    await Clipboard.setData(ClipboardData(text: "$hexidecimal"));
+
+                    final snackBar = SnackBar(
+                      content: const Text('La couleur a été copiée'),
+                      action: SnackBarAction(
+                        label: 'OK',
+                        onPressed: () {
+                          // Some code to undo the change.
+                        },
+                      ),
+                    );
+
+                    // Find the ScaffoldMessenger in the widget tree
+                    // and use it to show a SnackBar.
+                    ScaffoldMessenger.of(context).showSnackBar(snackBar);
                   },
                 ),
               ),
-              trailing: Container(height: 30, width: 30, color: Colors.redAccent),
+              trailing: Container(height: 30, width: 30, color: Color.fromRGBO(R, G, B, 1)),
             ),
+
+            ListTile(
+              title: const Text('RGB', style: TextStyle()),
+              trailing: Text("($R, $G, $B, 255)", style: TextStyle(fontSize: 14)),
+            ),
+
+            ListTile(
+              title: const Text('Lab', style: TextStyle()),
+              trailing: Text(detailedView ? "($L, $a, $b)" : "(${L.toStringAsFixed(2)}, ${a.toStringAsFixed(2)}, ${b.toStringAsFixed(2)})", style: TextStyle(fontSize: detailedView ? 12 : 14)),
+            ),
+
+            Divider(),
+
+            ListTile(
+              title: const Text('Choisiseur de couleur', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20)),
+              trailing: ElevatedButton(
+                  onPressed: () {
+                    setState(() {
+                      showColorPicker = !showColorPicker;
+                    });
+                  },
+                  child:Text(showColorPicker ? "Cacher" : "Afficher")
+              ),
+            ),
+
+            if (showColorPicker)
+              ColorPicker(
+                pickerColor: Color.fromRGBO(R, G, B, 1),
+                onColorChanged: (Color value) {
+                },
+              ),
+
 
             Divider(),
 
